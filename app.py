@@ -41,6 +41,8 @@ PARAMS = {
     "include_24hr_change": "true"
 }
 
+FG_URL = "https://api.alternative.me/fng/"
+
 
 def classificar(change):
     if change is None:
@@ -134,6 +136,17 @@ def buscar_dados():
     return response.json()
 
 
+@st.cache_data(ttl=300)
+def buscar_fear_greed():
+    response = requests.get(FG_URL, timeout=15)
+    response.raise_for_status()
+    data = response.json()["data"][0]
+    return {
+        "valor": int(data["value"]),
+        "texto": data["value_classification"]
+    }
+
+
 def montar_dataframe(data):
     linhas = []
 
@@ -210,8 +223,20 @@ def filtrar_dataframe(df, grupo_escolhido, notas_escolhidas):
     return df_filtrado
 
 
+def texto_fg(valor):
+    if valor >= 75:
+        return "Ganância extrema"
+    elif valor >= 55:
+        return "Ganância"
+    elif valor >= 45:
+        return "Neutro"
+    elif valor >= 25:
+        return "Medo"
+    return "Medo extremo"
+
+
 st.title("Radar Atlas")
-st.caption("Watchlist cripto com leitura geral, day trade e swing trade")
+st.caption("Watchlist cripto com leitura geral, day trade, swing trade e sentimento")
 
 col_a, col_b, col_c = st.columns([1, 1, 1])
 with col_a:
@@ -234,6 +259,7 @@ with col_c:
 
 try:
     dados = buscar_dados()
+    fg = buscar_fear_greed()
     df = montar_dataframe(dados)
     df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
 
@@ -244,11 +270,18 @@ try:
     mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
     mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
 
-    c1, c2, c3, c4 = st.columns(4)
+    day_top = df_filtrado.sort_values(["Day Score", "Variação 24h %"], ascending=[False, False])
+    swing_top = df_filtrado.sort_values(["Swing Score", "Variação 24h %"], ascending=[False, False])
+
+    melhor_day = day_top.iloc[0]
+    melhor_swing = swing_top.iloc[0]
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
     c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
-    c3.metric("Top 3 geral", top3_texto(df_filtrado))
-    c4.metric("Bottom 3 geral", bottom3_texto(df_filtrado))
+    c3.metric("Melhor day trade", melhor_day["Ticker"], f"Score {melhor_day['Day Score']}")
+    c4.metric("Melhor swing trade", melhor_swing["Ticker"], f"Score {melhor_swing['Swing Score']}")
+    c5.metric("Fear & Greed", fg["valor"], texto_fg(fg["valor"]))
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Geral",
@@ -280,7 +313,6 @@ try:
 
     with tab5:
         st.subheader("Foco operacional | Day Trade")
-        day_top = df_filtrado.sort_values(["Day Score", "Variação 24h %"], ascending=[False, False])
         st.dataframe(
             estilizar_dataframe(day_top[[
                 "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
@@ -291,7 +323,6 @@ try:
 
     with tab6:
         st.subheader("Foco operacional | Swing Trade")
-        swing_top = df_filtrado.sort_values(["Swing Score", "Variação 24h %"], ascending=[False, False])
         st.dataframe(
             estilizar_dataframe(swing_top[[
                 "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
