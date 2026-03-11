@@ -225,6 +225,25 @@ def texto_fg(valor):
     return "Medo extremo"
 
 
+def card_derivativo(titulo, valor, subtitulo):
+    st.markdown(
+        f"""
+        <div style="
+            border:1px solid rgba(128,128,128,0.25);
+            border-radius:16px;
+            padding:18px;
+            min-height:120px;
+            background-color: rgba(240,242,246,0.35);
+        ">
+            <div style="font-size:16px; opacity:0.8; margin-bottom:8px;">{titulo}</div>
+            <div style="font-size:28px; font-weight:700; margin-bottom:8px;">{valor}</div>
+            <div style="font-size:14px; opacity:0.75;">{subtitulo}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 st.title("Radar Atlas")
 st.caption("Watchlist cripto com leitura geral, day trade, swing trade e sentimento")
 
@@ -326,13 +345,26 @@ try:
 
     with tab7:
         st.subheader("Derivativos")
-        st.write("Bloco preparado para integração futura com CoinGlass.")
-        st.markdown("Próximos campos:")
-        st.markdown("- Open Interest")
-        st.markdown("- Funding Rate")
-        st.markdown("- Liquidações")
-        st.markdown("- Heatmap / Liquidity Map")
-        st.markdown("- Long/Short bias")
+
+        d1, d2, d3, d4, d5 = st.columns(5)
+        with d1:
+            card_derivativo("Open Interest", "Em breve", "Preparando integração")
+        with d2:
+            card_derivativo("Funding Rate", "Em breve", "Preparando integração")
+        with d3:
+            card_derivativo("Liquidações", "Em breve", "Preparando integração")
+        with d4:
+            card_derivativo("Bias", "Em breve", "Preparando integração")
+        with d5:
+            card_derivativo("Heatmap", "Em breve", "Preparando integração")
+
+        st.markdown("### Próximo módulo")
+        st.markdown("- CoinGlass / derivativos")
+        st.markdown("- Open Interest por ativo")
+        st.markdown("- Funding rate")
+        st.markdown("- Long/short bias")
+        st.markdown("- Liquidações agregadas")
+        st.markdown("- Link ou bloco para heatmap/liquidity map")
 
 except Exception as e:
     st.error(f"Erro ao carregar dados: {e}")
