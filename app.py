@@ -43,11 +43,6 @@ PARAMS = {
 
 FG_URL = "https://api.alternative.me/fng/"
 
-BINANCE_OPEN_INTEREST_URL = "https://fapi.binance.com/fapi/v1/openInterest"
-BINANCE_FUNDING_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
-
-DERIV_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
-
 
 def classificar(change):
     if change is None:
@@ -163,55 +158,6 @@ def buscar_fear_greed():
         return None, f"Erro ao buscar Fear & Greed: {e}"
 
 
-@st.cache_data(ttl=300)
-def buscar_derivativos_binance():
-    try:
-        linhas = []
-
-        for symbol in DERIV_SYMBOLS:
-            oi_resp = requests.get(
-                BINANCE_OPEN_INTEREST_URL,
-                params={"symbol": symbol},
-                timeout=15
-            )
-            oi_resp.raise_for_status()
-            oi_data = oi_resp.json()
-
-            fr_resp = requests.get(
-                BINANCE_FUNDING_URL,
-                params={"symbol": symbol, "limit": 1},
-                timeout=15
-            )
-            fr_resp.raise_for_status()
-            fr_data = fr_resp.json()
-
-            funding = None
-            if fr_data and isinstance(fr_data, list):
-                funding = float(fr_data[-1]["fundingRate"])
-
-            open_interest = float(oi_data["openInterest"])
-
-            if funding is None:
-                bias = "Sem dado"
-            elif funding > 0.0001:
-                bias = "Comprador"
-            elif funding < -0.0001:
-                bias = "Vendedor"
-            else:
-                bias = "Neutro"
-
-            linhas.append({
-                "Symbol": symbol,
-                "Open Interest": round(open_interest, 2),
-                "Funding Rate": funding,
-                "Bias": bias
-            })
-
-        return pd.DataFrame(linhas), None
-    except Exception as e:
-        return None, f"Erro ao buscar derivativos Binance: {e}"
-
-
 def montar_dataframe(data):
     linhas = []
 
@@ -313,6 +259,7 @@ st.title("Radar Atlas")
 st.caption("Watchlist cripto com leitura geral, day trade, swing trade, sentimento e derivativos")
 
 col_a, col_b, col_c = st.columns([1, 1, 1])
+
 with col_a:
     grupo_escolhido = st.selectbox(
         "Filtrar grupo",
@@ -332,7 +279,6 @@ with col_c:
 
 dados, erro_dados = buscar_dados()
 fg, erro_fg = buscar_fear_greed()
-deriv_df, erro_deriv = buscar_derivativos_binance()
 
 if erro_dados:
     st.error(erro_dados)
@@ -340,9 +286,6 @@ if erro_dados:
 
 if erro_fg:
     st.warning(erro_fg)
-
-if erro_deriv:
-    st.warning(erro_deriv)
 
 df = montar_dataframe(dados)
 df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
@@ -423,34 +366,26 @@ with tab6:
     )
 
 with tab7:
-    st.subheader("Derivativos | Binance Futures")
+    st.subheader("Derivativos")
 
-    if deriv_df is not None and not deriv_df.empty:
-        d1, d2, d3, d4 = st.columns(4)
+    st.warning("Fonte de derivativos temporariamente indisponível neste ambiente.")
 
-        with d1:
-            btc_row = deriv_df[deriv_df["Symbol"] == "BTCUSDT"].iloc[0]
-            card_derivativo("BTC Open Interest", f"{btc_row['Open Interest']:,.2f}", btc_row["Bias"])
-
-        with d2:
-            eth_row = deriv_df[deriv_df["Symbol"] == "ETHUSDT"].iloc[0]
-            card_derivativo("ETH Open Interest", f"{eth_row['Open Interest']:,.2f}", eth_row["Bias"])
-
-        with d3:
-            sol_row = deriv_df[deriv_df["Symbol"] == "SOLUSDT"].iloc[0]
-            card_derivativo("SOL Open Interest", f"{sol_row['Open Interest']:,.2f}", sol_row["Bias"])
-
-        with d4:
-            doge_row = deriv_df[deriv_df["Symbol"] == "DOGEUSDT"].iloc[0]
-            card_derivativo("DOGE Open Interest", f"{doge_row['Open Interest']:,.2f}", doge_row["Bias"])
-
-        st.markdown("### Funding e viés")
-        st.dataframe(deriv_df, use_container_width=True)
-    else:
-        st.warning("Derivativos indisponíveis no momento.")
+    d1, d2, d3, d4, d5 = st.columns(5)
+    with d1:
+        card_derivativo("Open Interest", "Em breve", "Fonte em ajuste")
+    with d2:
+        card_derivativo("Funding Rate", "Em breve", "Fonte em ajuste")
+    with d3:
+        card_derivativo("Liquidações", "Em breve", "Fonte em ajuste")
+    with d4:
+        card_derivativo("Bias", "Em breve", "Fonte em ajuste")
+    with d5:
+        card_derivativo("Heatmap", "Em breve", "Fonte em ajuste")
 
     st.markdown("### Próximo módulo")
-    st.markdown("- CoinGlass para liquidações agregadas")
-    st.markdown("- Heatmap / Liquidity Map")
-    st.markdown("- Open interest por exchange")
-    st.markdown("- Funding mais avançado")
+    st.markdown("- CoinGlass / derivativos")
+    st.markdown("- Open Interest por ativo")
+    st.markdown("- Funding rate")
+    st.markdown("- Long/short bias")
+    st.markdown("- Liquidações agregadas")
+    st.markdown("- Link ou bloco para heatmap/liquidity map")
