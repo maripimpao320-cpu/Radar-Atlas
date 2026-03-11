@@ -134,68 +134,82 @@ def score_swing_trade(change, grupo):
     return score, "D"
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=900)
 def buscar_dados():
-    response = requests.get(URL, params=PARAMS, timeout=20)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.get(URL, params=PARAMS, timeout=20)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        if status_code == 429:
+            return None, "CoinGecko limitou temporariamente as requisições (erro 429). Aguarde alguns minutos e tente novamente."
+        return None, f"Erro HTTP ao buscar CoinGecko: {e}"
+    except Exception as e:
+        return None, f"Erro ao buscar CoinGecko: {e}"
+
+
+@st.cache_data(ttl=900)
+def buscar_fear_greed():
+    try:
+        response = requests.get(FG_URL, timeout=15)
+        response.raise_for_status()
+        data = response.json()["data"][0]
+        return {
+            "valor": int(data["value"]),
+            "texto": data["value_classification"]
+        }, None
+    except Exception as e:
+        return None, f"Erro ao buscar Fear & Greed: {e}"
 
 
 @st.cache_data(ttl=300)
-def buscar_fear_greed():
-    response = requests.get(FG_URL, timeout=15)
-    response.raise_for_status()
-    data = response.json()["data"][0]
-    return {
-        "valor": int(data["value"]),
-        "texto": data["value_classification"]
-    }
-
-
-@st.cache_data(ttl=120)
 def buscar_derivativos_binance():
-    linhas = []
+    try:
+        linhas = []
 
-    for symbol in DERIV_SYMBOLS:
-        oi_resp = requests.get(
-            BINANCE_OPEN_INTEREST_URL,
-            params={"symbol": symbol},
-            timeout=15
-        )
-        oi_resp.raise_for_status()
-        oi_data = oi_resp.json()
+        for symbol in DERIV_SYMBOLS:
+            oi_resp = requests.get(
+                BINANCE_OPEN_INTEREST_URL,
+                params={"symbol": symbol},
+                timeout=15
+            )
+            oi_resp.raise_for_status()
+            oi_data = oi_resp.json()
 
-        fr_resp = requests.get(
-            BINANCE_FUNDING_URL,
-            params={"symbol": symbol, "limit": 1},
-            timeout=15
-        )
-        fr_resp.raise_for_status()
-        fr_data = fr_resp.json()
+            fr_resp = requests.get(
+                BINANCE_FUNDING_URL,
+                params={"symbol": symbol, "limit": 1},
+                timeout=15
+            )
+            fr_resp.raise_for_status()
+            fr_data = fr_resp.json()
 
-        funding = None
-        if fr_data and isinstance(fr_data, list):
-            funding = float(fr_data[-1]["fundingRate"])
+            funding = None
+            if fr_data and isinstance(fr_data, list):
+                funding = float(fr_data[-1]["fundingRate"])
 
-        open_interest = float(oi_data["openInterest"])
+            open_interest = float(oi_data["openInterest"])
 
-        if funding is None:
-            bias = "Sem dado"
-        elif funding > 0.0001:
-            bias = "Comprador"
-        elif funding < -0.0001:
-            bias = "Vendedor"
-        else:
-            bias = "Neutro"
+            if funding is None:
+                bias = "Sem dado"
+            elif funding > 0.0001:
+                bias = "Comprador"
+            elif funding < -0.0001:
+                bias = "Vendedor"
+            else:
+                bias = "Neutro"
 
-        linhas.append({
-            "Symbol": symbol,
-            "Open Interest": round(open_interest, 2),
-            "Funding Rate": funding,
-            "Bias": bias
-        })
+            linhas.append({
+                "Symbol": symbol,
+                "Open Interest": round(open_interest, 2),
+                "Funding Rate": funding,
+                "Bias": bias
+            })
 
-    return pd.DataFrame(linhas)
+        return pd.DataFrame(linhas), None
+    except Exception as e:
+        return None, f"Erro ao buscar derivativos Binance: {e}"
 
 
 def montar_dataframe(data):
@@ -314,113 +328,129 @@ with col_b:
 
 with col_c:
     if st.button("Atualizar radar"):
-        st.cache_data.clear()
         st.rerun()
 
-try:
-    dados = buscar_dados()
-    fg = buscar_fear_greed()
-    deriv_df = buscar_derivativos_binance()
+dados, erro_dados = buscar_dados()
+fg, erro_fg = buscar_fear_greed()
+deriv_df, erro_deriv = buscar_derivativos_binance()
 
-    df = montar_dataframe(dados)
-    df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
+if erro_dados:
+    st.error(erro_dados)
+    st.stop()
 
-    if df_filtrado.empty:
-        st.warning("Nenhum ativo encontrado com esse filtro.")
-        st.stop()
+if erro_fg:
+    st.warning(erro_fg)
 
-    mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
-    mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
+if erro_deriv:
+    st.warning(erro_deriv)
 
-    day_top = df_filtrado.sort_values(["Pontuação Day", "Variação 24h %"], ascending=[False, False])
-    swing_top = df_filtrado.sort_values(["Pontuação Swing", "Variação 24h %"], ascending=[False, False])
+df = montar_dataframe(dados)
+df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
 
-    melhor_day = day_top.iloc[0]
-    melhor_swing = swing_top.iloc[0]
+if df_filtrado.empty:
+    st.warning("Nenhum ativo encontrado com esse filtro.")
+    st.stop()
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
-    c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
-    c3.metric("Melhor day", melhor_day["Ticker"], f"Pontuação {melhor_day['Pontuação Day']}")
-    c4.metric("Melhor swing", melhor_swing["Ticker"], f"Pontuação {melhor_swing['Pontuação Swing']}")
+mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
+mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
+
+day_top = df_filtrado.sort_values(["Pontuação Day", "Variação 24h %"], ascending=[False, False])
+swing_top = df_filtrado.sort_values(["Pontuação Swing", "Variação 24h %"], ascending=[False, False])
+
+melhor_day = day_top.iloc[0]
+melhor_swing = swing_top.iloc[0]
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
+c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
+c3.metric("Melhor day", melhor_day["Ticker"], f"Pontuação {melhor_day['Pontuação Day']}")
+c4.metric("Melhor swing", melhor_swing["Ticker"], f"Pontuação {melhor_swing['Pontuação Swing']}")
+
+if fg:
     c5.metric("Fear & Greed", fg["valor"], texto_fg(fg["valor"]))
+else:
+    c5.metric("Fear & Greed", "-", "Sem dado")
 
-    st.info("Legenda: A = Forte | B = Boa | C = Neutra | D = Fraca")
+st.info("Legenda: A = Forte | B = Boa | C = Neutra | D = Fraca")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Geral",
-        "Majors",
-        "Infra/L1",
-        "Narrativas",
-        "Day Trade",
-        "Swing Trade",
-        "Derivativos"
-    ])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Geral",
+    "Majors",
+    "Infra/L1",
+    "Narrativas",
+    "Day Trade",
+    "Swing Trade",
+    "Derivativos"
+])
 
-    with tab1:
-        st.subheader("Tabela geral")
-        st.dataframe(estilizar_dataframe(df_filtrado), use_container_width=True)
+with tab1:
+    st.subheader("Tabela geral")
+    st.dataframe(estilizar_dataframe(df_filtrado), use_container_width=True)
 
-    with tab2:
-        st.subheader("MAJORS")
-        df_majors = df_filtrado[df_filtrado["Grupo"] == "MAJORS"].sort_values("Variação 24h %", ascending=False)
-        st.dataframe(estilizar_dataframe(df_majors), use_container_width=True)
+with tab2:
+    st.subheader("MAJORS")
+    df_majors = df_filtrado[df_filtrado["Grupo"] == "MAJORS"].sort_values("Variação 24h %", ascending=False)
+    st.dataframe(estilizar_dataframe(df_majors), use_container_width=True)
 
-    with tab3:
-        st.subheader("INFRA_L1")
-        df_infra = df_filtrado[df_filtrado["Grupo"] == "INFRA_L1"].sort_values("Variação 24h %", ascending=False)
-        st.dataframe(estilizar_dataframe(df_infra), use_container_width=True)
+with tab3:
+    st.subheader("INFRA_L1")
+    df_infra = df_filtrado[df_filtrado["Grupo"] == "INFRA_L1"].sort_values("Variação 24h %", ascending=False)
+    st.dataframe(estilizar_dataframe(df_infra), use_container_width=True)
 
-    with tab4:
-        st.subheader("NARRATIVAS")
-        df_narr = df_filtrado[df_filtrado["Grupo"] == "NARRATIVAS"].sort_values("Variação 24h %", ascending=False)
-        st.dataframe(estilizar_dataframe(df_narr), use_container_width=True)
+with tab4:
+    st.subheader("NARRATIVAS")
+    df_narr = df_filtrado[df_filtrado["Grupo"] == "NARRATIVAS"].sort_values("Variação 24h %", ascending=False)
+    st.dataframe(estilizar_dataframe(df_narr), use_container_width=True)
 
-    with tab5:
-        st.subheader("Foco operacional | Day Trade")
-        st.dataframe(
-            estilizar_dataframe(day_top[[
-                "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-                "Nota Geral", "Day Nota", "Pontuação Day"
-            ]]),
-            use_container_width=True
-        )
+with tab5:
+    st.subheader("Foco operacional | Day Trade")
+    st.dataframe(
+        estilizar_dataframe(day_top[[
+            "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
+            "Nota Geral", "Day Nota", "Pontuação Day"
+        ]]),
+        use_container_width=True
+    )
 
-    with tab6:
-        st.subheader("Foco operacional | Swing Trade")
-        st.dataframe(
-            estilizar_dataframe(swing_top[[
-                "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-                "Nota Geral", "Swing Nota", "Pontuação Swing"
-            ]]),
-            use_container_width=True
-        )
+with tab6:
+    st.subheader("Foco operacional | Swing Trade")
+    st.dataframe(
+        estilizar_dataframe(swing_top[[
+            "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
+            "Nota Geral", "Swing Nota", "Pontuação Swing"
+        ]]),
+        use_container_width=True
+    )
 
-    with tab7:
-        st.subheader("Derivativos | Binance Futures")
+with tab7:
+    st.subheader("Derivativos | Binance Futures")
 
+    if deriv_df is not None and not deriv_df.empty:
         d1, d2, d3, d4 = st.columns(4)
+
         with d1:
             btc_row = deriv_df[deriv_df["Symbol"] == "BTCUSDT"].iloc[0]
             card_derivativo("BTC Open Interest", f"{btc_row['Open Interest']:,.2f}", btc_row["Bias"])
+
         with d2:
             eth_row = deriv_df[deriv_df["Symbol"] == "ETHUSDT"].iloc[0]
             card_derivativo("ETH Open Interest", f"{eth_row['Open Interest']:,.2f}", eth_row["Bias"])
+
         with d3:
             sol_row = deriv_df[deriv_df["Symbol"] == "SOLUSDT"].iloc[0]
             card_derivativo("SOL Open Interest", f"{sol_row['Open Interest']:,.2f}", sol_row["Bias"])
+
         with d4:
             doge_row = deriv_df[deriv_df["Symbol"] == "DOGEUSDT"].iloc[0]
             card_derivativo("DOGE Open Interest", f"{doge_row['Open Interest']:,.2f}", doge_row["Bias"])
 
         st.markdown("### Funding e viés")
         st.dataframe(deriv_df, use_container_width=True)
+    else:
+        st.warning("Derivativos indisponíveis no momento.")
 
-        st.markdown("### Próximo módulo")
-        st.markdown("- CoinGlass para liquidações agregadas")
-        st.markdown("- Heatmap / Liquidity Map")
-        st.markdown("- Open interest por exchange")
-        st.markdown("- Funding mais avançado")
-
-except Exception as e:
-    st.error(f"Erro ao carregar dados: {e}")
+    st.markdown("### Próximo módulo")
+    st.markdown("- CoinGlass para liquidações agregadas")
+    st.markdown("- Heatmap / Liquidity Map")
+    st.markdown("- Open interest por exchange")
+    st.markdown("- Funding mais avançado")
