@@ -83,9 +83,7 @@ def score_day_trade(change, grupo):
     else:
         score -= 2
 
-    if grupo == "NARRATIVAS":
-        score += 1
-    elif grupo == "INFRA_L1":
+    if grupo in ["NARRATIVAS", "INFRA_L1"]:
         score += 1
 
     if score >= 4:
@@ -170,6 +168,26 @@ def montar_dataframe(data):
     return df
 
 
+def colorir_nota(valor):
+    if valor == "A":
+        return "background-color: #1f7a1f; color: white;"
+    elif valor == "B":
+        return "background-color: #1565c0; color: white;"
+    elif valor == "C":
+        return "background-color: #b28704; color: black;"
+    elif valor == "D":
+        return "background-color: #b71c1c; color: white;"
+    return ""
+
+
+def estilizar_dataframe(df):
+    cols_notas = [c for c in ["Nota Geral", "Day Nota", "Swing Nota"] if c in df.columns]
+    styler = df.style
+    for col in cols_notas:
+        styler = styler.map(colorir_nota, subset=[col])
+    return styler
+
+
 def top3_texto(df):
     top = df.head(3)
     return " | ".join([f"{r['Ticker']} ({r['Variação 24h %']}%)" for _, r in top.iterrows()])
@@ -180,49 +198,105 @@ def bottom3_texto(df):
     return " | ".join([f"{r['Ticker']} ({r['Variação 24h %']}%)" for _, r in bot.iterrows()])
 
 
+def filtrar_dataframe(df, grupo_escolhido, notas_escolhidas):
+    df_filtrado = df.copy()
+
+    if grupo_escolhido != "TODOS":
+        df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_escolhido]
+
+    if notas_escolhidas:
+        df_filtrado = df_filtrado[df_filtrado["Nota Geral"].isin(notas_escolhidas)]
+
+    return df_filtrado
+
+
 st.title("Radar Atlas")
 st.caption("Watchlist cripto com leitura geral, day trade e swing trade")
+
+col_a, col_b, col_c = st.columns([1, 1, 1])
+with col_a:
+    grupo_escolhido = st.selectbox(
+        "Filtrar grupo",
+        ["TODOS", "MAJORS", "INFRA_L1", "NARRATIVAS"]
+    )
+
+with col_b:
+    notas_escolhidas = st.multiselect(
+        "Filtrar nota geral",
+        ["A", "B", "C", "D"],
+        default=[]
+    )
+
+with col_c:
+    if st.button("Atualizar radar"):
+        st.cache_data.clear()
+        st.rerun()
 
 try:
     dados = buscar_dados()
     df = montar_dataframe(dados)
+    df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
 
-    mais_forte = df.iloc[0]
-    mais_fraca = df.sort_values("Variação 24h %", ascending=True).iloc[0]
+    if df_filtrado.empty:
+        st.warning("Nenhum ativo encontrado com esse filtro.")
+        st.stop()
+
+    mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
+    mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
     c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
-    c3.metric("Top 3 geral", top3_texto(df))
-    c4.metric("Bottom 3 geral", bottom3_texto(df))
+    c3.metric("Top 3 geral", top3_texto(df_filtrado))
+    c4.metric("Bottom 3 geral", bottom3_texto(df_filtrado))
 
-    st.subheader("Tabela geral")
-    st.dataframe(df, use_container_width=True)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Geral",
+        "Majors",
+        "Infra/L1",
+        "Narrativas",
+        "Day Trade",
+        "Swing Trade"
+    ])
 
-    st.subheader("Por grupo")
-    for grupo in ["MAJORS", "INFRA_L1", "NARRATIVAS"]:
-        st.markdown(f"### {grupo}")
-        df_grupo = df[df["Grupo"] == grupo].sort_values("Variação 24h %", ascending=False)
-        st.dataframe(df_grupo, use_container_width=True)
+    with tab1:
+        st.subheader("Tabela geral")
+        st.dataframe(estilizar_dataframe(df_filtrado), use_container_width=True)
 
-    st.subheader("Foco operacional")
+    with tab2:
+        st.subheader("MAJORS")
+        df_majors = df_filtrado[df_filtrado["Grupo"] == "MAJORS"].sort_values("Variação 24h %", ascending=False)
+        st.dataframe(estilizar_dataframe(df_majors), use_container_width=True)
 
-    day_top = df.sort_values(["Day Score", "Variação 24h %"], ascending=[False, False]).head(3)
-    swing_top = df.sort_values(["Swing Score", "Variação 24h %"], ascending=[False, False]).head(3)
+    with tab3:
+        st.subheader("INFRA_L1")
+        df_infra = df_filtrado[df_filtrado["Grupo"] == "INFRA_L1"].sort_values("Variação 24h %", ascending=False)
+        st.dataframe(estilizar_dataframe(df_infra), use_container_width=True)
 
-    col1, col2 = st.columns(2)
+    with tab4:
+        st.subheader("NARRATIVAS")
+        df_narr = df_filtrado[df_filtrado["Grupo"] == "NARRATIVAS"].sort_values("Variação 24h %", ascending=False)
+        st.dataframe(estilizar_dataframe(df_narr), use_container_width=True)
 
-    with col1:
-        st.markdown("### Day Trade")
+    with tab5:
+        st.subheader("Foco operacional | Day Trade")
+        day_top = df_filtrado.sort_values(["Day Score", "Variação 24h %"], ascending=[False, False])
         st.dataframe(
-            day_top[["Ticker", "Grupo", "Variação 24h %", "Day Nota", "Day Score"]],
+            estilizar_dataframe(day_top[[
+                "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
+                "Nota Geral", "Day Nota", "Day Score"
+            ]]),
             use_container_width=True
         )
 
-    with col2:
-        st.markdown("### Swing Trade")
+    with tab6:
+        st.subheader("Foco operacional | Swing Trade")
+        swing_top = df_filtrado.sort_values(["Swing Score", "Variação 24h %"], ascending=[False, False])
         st.dataframe(
-            swing_top[["Ticker", "Grupo", "Variação 24h %", "Swing Nota", "Swing Score"]],
+            estilizar_dataframe(swing_top[[
+                "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
+                "Nota Geral", "Swing Nota", "Swing Score"
+            ]]),
             use_container_width=True
         )
 
