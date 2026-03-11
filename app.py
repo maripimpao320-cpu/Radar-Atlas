@@ -171,9 +171,9 @@ def montar_dataframe(data):
             "Status": status,
             "Nota Geral": nota,
             "Day Nota": day_nota,
-            "Day Score": day_score,
+            "Pontuação Day": day_score,
             "Swing Nota": swing_nota,
-            "Swing Score": swing_score
+            "Pontuação Swing": swing_score
         })
 
     df = pd.DataFrame(linhas)
@@ -199,16 +199,6 @@ def estilizar_dataframe(df):
     for col in cols_notas:
         styler = styler.map(colorir_nota, subset=[col])
     return styler
-
-
-def top3_texto(df):
-    top = df.head(3)
-    return " | ".join([f"{r['Ticker']} ({r['Variação 24h %']}%)" for _, r in top.iterrows()])
-
-
-def bottom3_texto(df):
-    bot = df.sort_values("Variação 24h %", ascending=True).head(3)
-    return " | ".join([f"{r['Ticker']} ({r['Variação 24h %']}%)" for _, r in bot.iterrows()])
 
 
 def filtrar_dataframe(df, grupo_escolhido, notas_escolhidas):
@@ -270,8 +260,8 @@ try:
     mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
     mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
 
-    day_top = df_filtrado.sort_values(["Day Score", "Variação 24h %"], ascending=[False, False])
-    swing_top = df_filtrado.sort_values(["Swing Score", "Variação 24h %"], ascending=[False, False])
+    day_top = df_filtrado.sort_values(["Pontuação Day", "Variação 24h %"], ascending=[False, False])
+    swing_top = df_filtrado.sort_values(["Pontuação Swing", "Variação 24h %"], ascending=[False, False])
 
     melhor_day = day_top.iloc[0]
     melhor_swing = swing_top.iloc[0]
@@ -279,17 +269,20 @@ try:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
     c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
-    c3.metric("Melhor day trade", melhor_day["Ticker"], f"Score {melhor_day['Day Score']}")
-    c4.metric("Melhor swing trade", melhor_swing["Ticker"], f"Score {melhor_swing['Swing Score']}")
+    c3.metric("Melhor day", melhor_day["Ticker"], f"Pontuação {melhor_day['Pontuação Day']}")
+    c4.metric("Melhor swing", melhor_swing["Ticker"], f"Pontuação {melhor_swing['Pontuação Swing']}")
     c5.metric("Fear & Greed", fg["valor"], texto_fg(fg["valor"]))
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    st.info("Legenda: A = Forte | B = Boa | C = Neutra | D = Fraca")
+
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Geral",
         "Majors",
         "Infra/L1",
         "Narrativas",
         "Day Trade",
-        "Swing Trade"
+        "Swing Trade",
+        "Derivativos"
     ])
 
     with tab1:
@@ -316,7 +309,7 @@ try:
         st.dataframe(
             estilizar_dataframe(day_top[[
                 "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-                "Nota Geral", "Day Nota", "Day Score"
+                "Nota Geral", "Day Nota", "Pontuação Day"
             ]]),
             use_container_width=True
         )
@@ -326,10 +319,20 @@ try:
         st.dataframe(
             estilizar_dataframe(swing_top[[
                 "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-                "Nota Geral", "Swing Nota", "Swing Score"
+                "Nota Geral", "Swing Nota", "Pontuação Swing"
             ]]),
             use_container_width=True
         )
+
+    with tab7:
+        st.subheader("Derivativos")
+        st.write("Bloco preparado para integração futura com CoinGlass.")
+        st.markdown("Próximos campos:")
+        st.markdown("- Open Interest")
+        st.markdown("- Funding Rate")
+        st.markdown("- Liquidações")
+        st.markdown("- Heatmap / Liquidity Map")
+        st.markdown("- Long/Short bias")
 
 except Exception as e:
     st.error(f"Erro ao carregar dados: {e}")
