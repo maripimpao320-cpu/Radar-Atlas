@@ -1,391 +1,441 @@
-import requests
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-st.set_page_config(page_title="Radar Atlas", layout="wide")
+st.set_page_config(page_title="ATLAS 2.0", layout="wide")
 
-GRUPOS = {
-    "MAJORS": {
-        "bitcoin": "BTC",
-        "ethereum": "ETH",
-        "solana": "SOL",
-        "ripple": "XRP",
-        "dogecoin": "DOGE",
-    },
-    "INFRA_L1": {
-        "chainlink": "LINK",
-        "avalanche-2": "AVAX",
-        "cardano": "ADA",
-        "sui": "SUI",
-    },
-    "NARRATIVAS": {
-        "hyperliquid": "HYPE",
-        "injective-protocol": "INJ",
-        "bittensor": "TAO",
-    }
+# =========================
+# CONFIG / HELPERS
+# =========================
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 1.2rem;
+    padding-bottom: 1.2rem;
 }
-
-TODAS_AS_MOEDAS = {}
-for grupo in GRUPOS.values():
-    TODAS_AS_MOEDAS.update(grupo)
-
-GRUPO_POR_COIN = {}
-for nome_grupo, moedas in GRUPOS.items():
-    for coin_id in moedas:
-        GRUPO_POR_COIN[coin_id] = nome_grupo
-
-URL = "https://api.coingecko.com/api/v3/simple/price"
-PARAMS = {
-    "ids": ",".join(TODAS_AS_MOEDAS.keys()),
-    "vs_currencies": "usd",
-    "include_24hr_change": "true"
+.card {
+    border: 1px solid rgba(250,250,250,0.12);
+    border-radius: 14px;
+    padding: 16px 18px;
+    background: rgba(255,255,255,0.03);
+    margin-bottom: 12px;
 }
+.card-title {
+    font-size: 0.90rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    opacity: 0.90;
+    margin-bottom: 8px;
+}
+.big-value {
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+}
+.small-muted {
+    font-size: 0.84rem;
+    opacity: 0.75;
+}
+.tag {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-right: 6px;
+    margin-bottom: 6px;
+}
+.green {
+    background: rgba(0, 200, 100, 0.18);
+    color: #7CFFB2;
+}
+.yellow {
+    background: rgba(255, 193, 7, 0.18);
+    color: #FFD95A;
+}
+.red {
+    background: rgba(255, 82, 82, 0.18);
+    color: #FF8E8E;
+}
+.blue {
+    background: rgba(50, 150, 255, 0.18);
+    color: #8EC5FF;
+}
+.gray {
+    background: rgba(180, 180, 180, 0.15);
+    color: #D6D6D6;
+}
+hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin: 0.7rem 0 1rem 0;
+}
+.metric-line {
+    margin-bottom: 6px;
+    font-size: 0.92rem;
+}
+.score-a {color: #7CFFB2; font-weight: 800;}
+.score-b {color: #A8E66A; font-weight: 800;}
+.score-c {color: #FFD95A; font-weight: 800;}
+.score-d {color: #FF8E8E; font-weight: 800;}
+</style>
+""", unsafe_allow_html=True)
 
-FG_URL = "https://api.alternative.me/fng/"
 
-
-def classificar(change):
-    if change is None:
-        return "SEM DADO"
-    if change >= 4:
-        return "FORTE"
-    elif change >= 1:
-        return "POSITIVO"
-    elif change >= -1:
-        return "NEUTRO"
-    return "FRACO"
-
-
-def nota_geral(status):
-    if status == "FORTE":
+def grade_from_score(score: int) -> str:
+    if score >= 85:
         return "A"
-    elif status == "POSITIVO":
+    if score >= 70:
         return "B"
-    elif status == "NEUTRO":
+    if score >= 55:
         return "C"
-    elif status == "FRACO":
-        return "D"
-    return "-"
+    return "D"
 
 
-def score_day_trade(change, grupo):
-    score = 0
-
-    if change is None:
-        return 0, "D"
-
-    if change >= 6:
-        score += 4
-    elif change >= 4:
-        score += 3
-    elif change >= 2:
-        score += 2
-    elif change >= 0:
-        score += 1
-    else:
-        score -= 2
-
-    if grupo in ["NARRATIVAS", "INFRA_L1"]:
-        score += 1
-
-    if score >= 4:
-        return score, "A"
-    elif score >= 2:
-        return score, "B"
-    elif score >= 0:
-        return score, "C"
-    return score, "D"
+def grade_class(grade: str) -> str:
+    return {
+        "A": "score-a",
+        "B": "score-b",
+        "C": "score-c",
+        "D": "score-d",
+    }.get(grade, "score-d")
 
 
-def score_swing_trade(change, grupo):
-    score = 0
-
-    if change is None:
-        return 0, "D"
-
-    if change >= 4:
-        score += 2
-    elif change >= 1:
-        score += 2
-    elif change >= -1:
-        score += 1
-    else:
-        score -= 2
-
-    if grupo == "MAJORS":
-        score += 2
-    elif grupo == "INFRA_L1":
-        score += 1
-
-    if change >= 10:
-        score -= 1
-
-    if score >= 4:
-        return score, "A"
-    elif score >= 2:
-        return score, "B"
-    elif score >= 0:
-        return score, "C"
-    return score, "D"
+def status_color(status: str) -> str:
+    s = status.lower()
+    if "liberado" in s or "verde" in s:
+        return "green"
+    if "observ" in s or "esperar" in s or "amarelo" in s:
+        return "yellow"
+    if "bloqueado" in s or "vermelho" in s:
+        return "red"
+    return "gray"
 
 
-@st.cache_data(ttl=900)
-def buscar_dados():
-    try:
-        response = requests.get(URL, params=PARAMS, timeout=20)
-        response.raise_for_status()
-        return response.json(), None
-    except requests.exceptions.HTTPError as e:
-        status_code = e.response.status_code if e.response is not None else None
-        if status_code == 429:
-            return None, "CoinGecko limitou temporariamente as requisições (erro 429). Aguarde alguns minutos e tente novamente."
-        return None, f"Erro HTTP ao buscar CoinGecko: {e}"
-    except Exception as e:
-        return None, f"Erro ao buscar CoinGecko: {e}"
+def bias_color(bias: str) -> str:
+    b = bias.lower()
+    if "long" in b:
+        return "green"
+    if "short" in b:
+        return "red"
+    return "gray"
 
 
-@st.cache_data(ttl=900)
-def buscar_fear_greed():
-    try:
-        response = requests.get(FG_URL, timeout=15)
-        response.raise_for_status()
-        data = response.json()["data"][0]
-        return {
-            "valor": int(data["value"]),
-            "texto": data["value_classification"]
-        }, None
-    except Exception as e:
-        return None, f"Erro ao buscar Fear & Greed: {e}"
+def render_tag(text: str, color: str = "gray"):
+    st.markdown(f'<span class="tag {color}">{text}</span>', unsafe_allow_html=True)
 
 
-def montar_dataframe(data):
-    linhas = []
-
-    for coin_id, ticker in TODAS_AS_MOEDAS.items():
-        if coin_id not in data:
-            continue
-
-        grupo = GRUPO_POR_COIN[coin_id]
-        preco = data[coin_id]["usd"]
-        variacao = data[coin_id].get("usd_24h_change", 0)
-
-        status = classificar(variacao)
-        nota = nota_geral(status)
-        day_score, day_nota = score_day_trade(variacao, grupo)
-        swing_score, swing_nota = score_swing_trade(variacao, grupo)
-
-        linhas.append({
-            "Ticker": ticker,
-            "Grupo": grupo,
-            "Preço": preco,
-            "Variação 24h %": round(variacao, 2),
-            "Status": status,
-            "Nota Geral": nota,
-            "Day Nota": day_nota,
-            "Pontuação Day": day_score,
-            "Swing Nota": swing_nota,
-            "Pontuação Swing": swing_score
-        })
-
-    df = pd.DataFrame(linhas)
-    df = df.sort_values("Variação 24h %", ascending=False).reset_index(drop=True)
-    return df
+def card_start(title: str):
+    st.markdown(f'<div class="card"><div class="card-title">{title}</div>', unsafe_allow_html=True)
 
 
-def colorir_nota(valor):
-    if valor == "A":
-        return "background-color: #1f7a1f; color: white;"
-    elif valor == "B":
-        return "background-color: #1565c0; color: white;"
-    elif valor == "C":
-        return "background-color: #b28704; color: black;"
-    elif valor == "D":
-        return "background-color: #b71c1c; color: white;"
-    return ""
+def card_end():
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
-def estilizar_dataframe(df):
-    cols_notas = [c for c in ["Nota Geral", "Day Nota", "Swing Nota"] if c in df.columns]
-    styler = df.style
-    for col in cols_notas:
-        styler = styler.map(colorir_nota, subset=[col])
-    return styler
+# =========================
+# MOCK DATA
+# =========================
+atlas_permission = "LONG LIBERADO"
+macro_bias = "Risk-On Moderado"
+confidence = 78
+risk_regime = "Agressivo Controlado"
 
+macro_check = {
+    "DXY": "Leve fraqueza",
+    "Global Liquidity / M2": "Neutro-positivo",
+    "BTC HTF": "Alta acima de suporte",
+    "ETH HTF": "Recuperação",
+    "S&P 500": "Positivo",
+    "Nasdaq": "Positivo",
+    "BTC Dominance": "Estável",
+    "Aggregated Funding": "Controlado",
+    "Aggregated OI": "Saudável",
+    "Institutional / ETF Flow": "Levemente positivo",
+}
 
-def filtrar_dataframe(df, grupo_escolhido, notas_escolhidas):
-    df_filtrado = df.copy()
+candidates = [
+    {
+        "Ticker": "AKTUSDT",
+        "Score": 82,
+        "Bias": "LONG",
+        "Status": "LIBERADO",
+        "Entry Zone": "15.10 - 15.22",
+        "Invalidation": "14.88",
+        "TP1": "15.48",
+        "TP2": "15.86",
+        "Risk": "Moderado",
+        "Reason": "VWAP + momentum + OI estável + liquidez acima",
+        "Confluences": "VWAP, volume, funding controlado, heatmap favorável",
+    },
+    {
+        "Ticker": "LINKUSDT",
+        "Score": 76,
+        "Bias": "LONG",
+        "Status": "LIBERADO",
+        "Entry Zone": "18.20 - 18.34",
+        "Invalidation": "17.95",
+        "TP1": "18.70",
+        "TP2": "19.10",
+        "Risk": "Moderado",
+        "Reason": "Estrutura limpa e fluxo setorial",
+        "Confluences": "HTF, volume, narrativa",
+    },
+    {
+        "Ticker": "ARBUSDT",
+        "Score": 63,
+        "Bias": "LONG",
+        "Status": "OBSERVAÇÃO",
+        "Entry Zone": "1.22 - 1.24",
+        "Invalidation": "1.18",
+        "TP1": "1.28",
+        "TP2": "1.33",
+        "Risk": "Médio/Alto",
+        "Reason": "Boa leitura, mas ainda sem confirmação plena",
+        "Confluences": "Momentum parcial",
+    },
+    {
+        "Ticker": "FETUSDT",
+        "Score": 49,
+        "Bias": "NEUTRO",
+        "Status": "BLOQUEADO",
+        "Entry Zone": "-",
+        "Invalidation": "-",
+        "TP1": "-",
+        "TP2": "-",
+        "Risk": "Alto",
+        "Reason": "Heatmap ruim e estrutura fraca",
+        "Confluences": "Nenhuma",
+    },
+]
 
-    if grupo_escolhido != "TODOS":
-        df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_escolhido]
+df = pd.DataFrame(candidates)
+df["Grade"] = df["Score"].apply(grade_from_score)
+df = df[[
+    "Ticker", "Score", "Grade", "Bias", "Status",
+    "Entry Zone", "Invalidation", "TP1", "TP2", "Risk", "Reason"
+]]
 
-    if notas_escolhidas:
-        df_filtrado = df_filtrado[df_filtrado["Nota Geral"].isin(notas_escolhidas)]
+top_row = df.sort_values("Score", ascending=False).iloc[0]
+selected_ticker = st.sidebar.selectbox("Selecionar ativo", df["Ticker"].tolist(), index=0)
 
-    return df_filtrado
+selected_data = next(item for item in candidates if item["Ticker"] == selected_ticker)
+selected_grade = grade_from_score(selected_data["Score"])
 
+# =========================
+# HEADER
+# =========================
+st.title("ATLAS 2.0")
+st.caption("Macro Filter + Tactical Score + Liquidity Layer")
+st.markdown(
+    "Motor de decisão operacional para filtrar contexto, ranquear setups e bloquear entradas ruins."
+)
 
-def texto_fg(valor):
-    if valor >= 75:
-        return "Ganância extrema"
-    elif valor >= 55:
-        return "Ganância"
-    elif valor >= 45:
-        return "Neutro"
-    elif valor >= 25:
-        return "Medo"
-    return "Medo extremo"
+# =========================
+# TOP STATUS ROW
+# =========================
+c1, c2, c3 = st.columns([1.2, 1.2, 1.6])
 
+with c1:
+    card_start("ATLAS STATUS")
+    st.markdown(f'<div class="big-value">{macro_bias}</div>', unsafe_allow_html=True)
+    render_tag(atlas_permission, status_color(atlas_permission))
+    render_tag(f"Confidence {confidence}", "blue")
+    render_tag(risk_regime, "gray")
+    st.markdown('<div class="small-muted">Sem liberação macro, não há trade.</div>', unsafe_allow_html=True)
+    card_end()
 
-def card_derivativo(titulo, valor, subtitulo):
-    st.markdown(
-        f"""
-        <div style="
-            border:1px solid rgba(128,128,128,0.25);
-            border-radius:16px;
-            padding:18px;
-            min-height:120px;
-            background-color: rgba(240,242,246,0.35);
-        ">
-            <div style="font-size:16px; opacity:0.8; margin-bottom:8px;">{titulo}</div>
-            <div style="font-size:28px; font-weight:700; margin-bottom:8px;">{valor}</div>
-            <div style="font-size:14px; opacity:0.75;">{subtitulo}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+with c2:
+    card_start("TRADE STATUS")
+    trade_status = (
+        "VERDE | Pode procurar entrada"
+        if selected_grade in ["A", "B"] and "LIBERADO" in selected_data["Status"]
+        else "AMARELO | Observação"
+        if selected_grade == "C"
+        else "VERMELHO | Bloqueado"
     )
+    st.markdown(f'<div class="big-value">{trade_status}</div>', unsafe_allow_html=True)
+    render_tag(f"Bias {selected_data['Bias']}", bias_color(selected_data["Bias"]))
+    render_tag(f"Grade {selected_grade}", status_color(selected_data["Status"]))
+    render_tag(selected_data["Status"], status_color(selected_data["Status"]))
+    st.markdown('<div class="small-muted">Status operacional do ativo selecionado.</div>', unsafe_allow_html=True)
+    card_end()
 
+with c3:
+    card_start("SYSTEM ANCHOR")
+    st.markdown("""
+**Sem Atlas, não há trade.**  
+**Sem score, não há convicção.**  
+**Sem liquidez favorável, não há pressa.**  
+**Sem risco definido, não há entrada.**
+""")
+    card_end()
 
-st.title("Radar Atlas")
-st.caption("Watchlist cripto com leitura geral, day trade, swing trade, sentimento e derivativos")
-
-col_a, col_b, col_c = st.columns([1, 1, 1])
+# =========================
+# SECOND ROW
+# =========================
+col_a, col_b, col_c = st.columns([1.35, 1, 1])
 
 with col_a:
-    grupo_escolhido = st.selectbox(
-        "Filtrar grupo",
-        ["TODOS", "MAJORS", "INFRA_L1", "NARRATIVAS"]
-    )
+    card_start("MACRO CHECK")
+    for k, v in macro_check.items():
+        st.markdown(f'<div class="metric-line"><b>{k}:</b> {v}</div>', unsafe_allow_html=True)
+    card_end()
 
 with col_b:
-    notas_escolhidas = st.multiselect(
-        "Filtrar nota geral",
-        ["A", "B", "C", "D"],
-        default=[]
-    )
+    card_start("SCORE ENGINE")
+    st.markdown("""
+- **A | 85–100** | Setup Forte  
+- **B | 70–84** | Setup Bom  
+- **C | 55–69** | Observação  
+- **D | <55** | Descartar
+""")
+    st.markdown("**Regra:** somente ativos **A** ou **B** podem virar operação.")
+    st.markdown("---")
+    st.markdown("""
+**Pesos**
+- Macro Alignment | 25  
+- Technical Structure | 20  
+- Volume / Momentum | 15  
+- Healthy Open Interest | 10  
+- Funding Quality | 10  
+- Liquidity / Heatmap | 10  
+- Narrative / Sector Flow | 10
+""")
+    card_end()
 
 with col_c:
-    if st.button("Atualizar radar"):
-        st.rerun()
+    card_start("LIQUIDITY LAYER")
+    st.markdown("""
+- **Heatmap:** favorável  
+- **Liquidity Pools:** acima do preço  
+- **Open Interest:** controlado  
+- **Funding:** neutro  
+- **Squeeze Risk:** moderado  
+- **Trap Risk:** baixo
+""")
+    st.markdown("---")
+    st.markdown("""
+**Regras**
+- Heatmap contrário = esperar  
+- OI sobe sem preço = risco  
+- Funding extremo = reduzir convicção  
+- Preço esticado em pool = evitar agressão
+""")
+    card_end()
 
-dados, erro_dados = buscar_dados()
-fg, erro_fg = buscar_fear_greed()
+# =========================
+# RADAR / SOURCES
+# =========================
+card_start("RADAR SCAN")
+rad1, rad2, rad3, rad4 = st.columns(4)
+with rad1:
+    render_tag("TradingView", "blue")
+with rad2:
+    render_tag("CoinGlass", "blue")
+with rad3:
+    render_tag("SoSoValue", "blue")
+with rad4:
+    render_tag("CryptoBubbles", "blue")
+st.markdown('<div class="small-muted">O Radar entra apenas quando o Atlas libera o mercado.</div>', unsafe_allow_html=True)
+card_end()
 
-if erro_dados:
-    st.error(erro_dados)
-    st.stop()
+# =========================
+# TABLE OF CANDIDATES
+# =========================
+st.subheader("TOP CANDIDATES")
 
-if erro_fg:
-    st.warning(erro_fg)
+def highlight_grade(val):
+    colors = {
+        "A": "background-color: rgba(0,200,100,0.18); color: #7CFFB2; font-weight: 700;",
+        "B": "background-color: rgba(150,200,50,0.18); color: #B6F36B; font-weight: 700;",
+        "C": "background-color: rgba(255,193,7,0.18); color: #FFD95A; font-weight: 700;",
+        "D": "background-color: rgba(255,82,82,0.18); color: #FF8E8E; font-weight: 700;",
+    }
+    return colors.get(val, "")
 
-df = montar_dataframe(dados)
-df_filtrado = filtrar_dataframe(df, grupo_escolhido, notas_escolhidas)
+def highlight_status(val):
+    if "LIBERADO" in str(val):
+        return "background-color: rgba(0,200,100,0.18); color: #7CFFB2; font-weight: 700;"
+    if "OBSERV" in str(val):
+        return "background-color: rgba(255,193,7,0.18); color: #FFD95A; font-weight: 700;"
+    if "BLOQUEADO" in str(val):
+        return "background-color: rgba(255,82,82,0.18); color: #FF8E8E; font-weight: 700;"
+    return ""
 
-if df_filtrado.empty:
-    st.warning("Nenhum ativo encontrado com esse filtro.")
-    st.stop()
+styled_df = df.style.map(highlight_grade, subset=["Grade"]).map(highlight_status, subset=["Status"])
+st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-mais_forte = df_filtrado.sort_values("Variação 24h %", ascending=False).iloc[0]
-mais_fraca = df_filtrado.sort_values("Variação 24h %", ascending=True).iloc[0]
+# =========================
+# EXECUTION CARD
+# =========================
+st.subheader("EXECUTION CARD")
 
-day_top = df_filtrado.sort_values(["Pontuação Day", "Variação 24h %"], ascending=[False, False])
-swing_top = df_filtrado.sort_values(["Pontuação Swing", "Variação 24h %"], ascending=[False, False])
+left, right = st.columns([1.1, 1])
 
-melhor_day = day_top.iloc[0]
-melhor_swing = swing_top.iloc[0]
-
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Mais forte", mais_forte["Ticker"], f"{mais_forte['Variação 24h %']}%")
-c2.metric("Mais fraca", mais_fraca["Ticker"], f"{mais_fraca['Variação 24h %']}%")
-c3.metric("Melhor day", melhor_day["Ticker"], f"Pontuação {melhor_day['Pontuação Day']}")
-c4.metric("Melhor swing", melhor_swing["Ticker"], f"Pontuação {melhor_swing['Pontuação Swing']}")
-
-if fg:
-    c5.metric("Fear & Greed", fg["valor"], texto_fg(fg["valor"]))
-else:
-    c5.metric("Fear & Greed", "-", "Sem dado")
-
-st.info("Legenda: A = Forte | B = Boa | C = Neutra | D = Fraca")
-
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Geral",
-    "Majors",
-    "Infra/L1",
-    "Narrativas",
-    "Day Trade",
-    "Swing Trade",
-    "Derivativos"
-])
-
-with tab1:
-    st.subheader("Tabela geral")
-    st.dataframe(estilizar_dataframe(df_filtrado), use_container_width=True)
-
-with tab2:
-    st.subheader("MAJORS")
-    df_majors = df_filtrado[df_filtrado["Grupo"] == "MAJORS"].sort_values("Variação 24h %", ascending=False)
-    st.dataframe(estilizar_dataframe(df_majors), use_container_width=True)
-
-with tab3:
-    st.subheader("INFRA_L1")
-    df_infra = df_filtrado[df_filtrado["Grupo"] == "INFRA_L1"].sort_values("Variação 24h %", ascending=False)
-    st.dataframe(estilizar_dataframe(df_infra), use_container_width=True)
-
-with tab4:
-    st.subheader("NARRATIVAS")
-    df_narr = df_filtrado[df_filtrado["Grupo"] == "NARRATIVAS"].sort_values("Variação 24h %", ascending=False)
-    st.dataframe(estilizar_dataframe(df_narr), use_container_width=True)
-
-with tab5:
-    st.subheader("Foco operacional | Day Trade")
-    st.dataframe(
-        estilizar_dataframe(day_top[[
-            "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-            "Nota Geral", "Day Nota", "Pontuação Day"
-        ]]),
-        use_container_width=True
+with left:
+    card_start(selected_data["Ticker"])
+    st.markdown(
+        f'<div class="big-value">{selected_data["Ticker"]} '
+        f'<span class="{grade_class(selected_grade)}">| Grade {selected_grade}</span></div>',
+        unsafe_allow_html=True
     )
+    render_tag(f"Score {selected_data['Score']}", "blue")
+    render_tag(selected_data["Bias"], bias_color(selected_data["Bias"]))
+    render_tag(selected_data["Status"], status_color(selected_data["Status"]))
 
-with tab6:
-    st.subheader("Foco operacional | Swing Trade")
-    st.dataframe(
-        estilizar_dataframe(swing_top[[
-            "Ticker", "Grupo", "Preço", "Variação 24h %", "Status",
-            "Nota Geral", "Swing Nota", "Pontuação Swing"
-        ]]),
-        use_container_width=True
+    st.markdown("---")
+    st.markdown(f"**Reason:** {selected_data['Reason']}")
+    st.markdown(f"**Confluences:** {selected_data['Confluences']}")
+    st.markdown(f"**Risk:** {selected_data['Risk']}")
+    card_end()
+
+with right:
+    card_start("TRADE PLAN")
+    st.markdown(f"**Entry:** {selected_data['Entry Zone']}")
+    st.markdown(f"**Stop:** {selected_data['Invalidation']}")
+    st.markdown(f"**TP1:** {selected_data['TP1']}")
+    st.markdown(f"**TP2:** {selected_data['TP2']}")
+
+    st.markdown("---")
+    rr_hint = "Aceitável" if selected_grade in ["A", "B"] else "Fraco"
+    st.markdown(f"**R/R Quality:** {rr_hint}")
+
+    final_note = (
+        "Entrada válida somente com confirmação de fluxo."
+        if selected_grade in ["A", "B"] and "LIBERADO" in selected_data["Status"]
+        else "Ativo em observação. Evitar antecipação."
+        if selected_grade == "C"
+        else "Trade bloqueado. Preservar capital."
     )
+    st.markdown(f"**Final Note:** {final_note}")
+    card_end()
 
-with tab7:
-    st.subheader("Derivativos")
+# =========================
+# FOOTER RULES / FLOW
+# =========================
+r1, r2 = st.columns(2)
 
-    st.warning("Fonte de derivativos temporariamente indisponível neste ambiente.")
+with r1:
+    card_start("SYSTEM RULES")
+    st.markdown("""
+- Radar não opera sem Atlas  
+- Atlas x Radar divergentes = sem trade  
+- Score C = observar  
+- Score D = descartar  
+- Sem estrutura = sem trade  
+- Sem stop = sem entrada  
+- RR ruim = cancelar  
+- Liquidez contrária = esperar
+""")
+    card_end()
 
-    d1, d2, d3, d4, d5 = st.columns(5)
-    with d1:
-        card_derivativo("Open Interest", "Em breve", "Fonte em ajuste")
-    with d2:
-        card_derivativo("Funding Rate", "Em breve", "Fonte em ajuste")
-    with d3:
-        card_derivativo("Liquidações", "Em breve", "Fonte em ajuste")
-    with d4:
-        card_derivativo("Bias", "Em breve", "Fonte em ajuste")
-    with d5:
-        card_derivativo("Heatmap", "Em breve", "Fonte em ajuste")
-
-    st.markdown("### Próximo módulo")
-    st.markdown("- CoinGlass / derivativos")
-    st.markdown("- Open Interest por ativo")
-    st.markdown("- Funding rate")
-    st.markdown("- Long/short bias")
-    st.markdown("- Liquidações agregadas")
-    st.markdown("- Link ou bloco para heatmap/liquidity map")
+with r2:
+    card_start("DECISION FLOW")
+    st.markdown("""
+1. Atlas define permissão  
+2. Radar seleciona ativos  
+3. Score ranqueia qualidade  
+4. Liquidez valida entrada  
+5. Card operacional executa
+""")
+    card_end()
